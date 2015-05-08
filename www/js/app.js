@@ -4,7 +4,15 @@
 // 'okashi' is the name of this angular module example (also set in a <body> attribute in index.html)
 // the 2nd parameter is an array of 'requires'
 // 'okashi.controllers' is found in controllers.js
-angular.module('okashi', ['ionic',  'ngCordova', 'okashi.controllers'])
+angular.module('okashi', [
+  'ionic',  
+  'ngCordova', 
+  'auth0',
+  'angular-storage',
+  'angular-jwt',
+  'okashi.constants',
+  'okashi.controllers'
+  ])
 
 // TODO: eventually we want to hide screen after
 // we sign-in/get data, etc... 
@@ -15,7 +23,10 @@ angular.module('okashi', ['ionic',  'ngCordova', 'okashi.controllers'])
 //   })
 // })
 
-.run(function($ionicPlatform, $rootScope, $ionicLoading, $cordovaSplashscreen) {
+.run(function($ionicPlatform, $rootScope, $ionicLoading, $cordovaSplashscreen, auth, store, jwtHelper, $location) {
+  // This hooks all auth events to check everything as soon as the app starts
+  auth.hookEvents();
+
   // execute splashscreen at the begining of the app
   // hide splash screen after 1 sec.
   setTimeout(function() {
@@ -42,22 +53,49 @@ angular.module('okashi', ['ionic',  'ngCordova', 'okashi.controllers'])
   });
 
   $rootScope.$on('loading:hide', function() {
-    setTimeout(function() {
-      $ionicLoading.hide();
-    }, 5000)
+
+    $ionicLoading.hide();
+
+  });
+
+  // This events gets triggered on refresh or URL change
+  $rootScope.$on('$locationChangeStart', function() {
+    if (!auth.isAuthenticated) {
+      var token = store.get('token');
+      if (token) {
+        if (!jwtHelper.isTokenExpired(token)) {
+          auth.authenticate(store.get('profile'), token);
+        } else {
+          // Either show Login page or use the refresh token to get a new idToken
+          $location.path('/');
+        }
+      }
+    }
   });
 })
     
 
 
-.config(function($stateProvider, $urlRouterProvider, $httpProvider) {
+.config(function($stateProvider, $urlRouterProvider, $httpProvider, 
+  authProvider, jwtInterceptorProvider, okashiConstants) {
   $stateProvider
 
+  // This is the state where you'll show the login
+  .state('login', {
+    url: '/login',
+    templateUrl: 'templates/login.html',
+    controller: 'LoginCtrl',
+  })
+
+  // every app is required for login
   .state('app', {
     url: "/app",
     abstract: true,
     templateUrl: "templates/menu.html",
-    controller: 'AppCtrl'
+    controller: 'AccountCtrl',
+    data: { 
+      requiresLogin: true
+    }
   })
 
   .state('app.search', {
@@ -113,6 +151,32 @@ angular.module('okashi', ['ionic',  'ngCordova', 'okashi.controllers'])
         return response
       }
     }
-  })
+  });
+
+  authProvider.init({
+    domain: okashiConstants.authDomain,
+    clientID: okashiConstants.authClientID,
+    loginState: okashiConstants.authLoginState
+  });
+
+  jwtInterceptorProvider.tokenGetter = function(store, jwtHelper, auth) {
+    var idToken = store.get('token');
+    var refreshToken = store.get('refreshToken');
+    // If no token return null
+    if (!idToken || !refreshToken) {
+      return null;
+    }
+    // If token is expired, get a new one
+    if (jwtHelper.isTokenExpired(idToken)) {
+      return auth.refreshIdToken(refreshToken).then(function(idToken) {
+        store.set('token', idToken);
+        return idToken;
+      });
+    } else {
+      return idToken;
+    }
+  }
+
+  $httpProvider.interceptors.push('jwtInterceptor');
 
 });

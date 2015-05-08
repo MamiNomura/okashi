@@ -2,6 +2,7 @@
   "name": "okashi",
   "app_id": "",
   "gulpStartupTasks": [
+    "replace",
     "sass",
     "watch"
   ],
